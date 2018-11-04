@@ -1,8 +1,9 @@
-use std::{io, fmt, str};
-use std::borrow::Cow;
-
+use http::{ContentType, Cookie, Header, HeaderMap, Status};
+use request::Request;
 use response::Responder;
-use http::{Header, HeaderMap, Status, ContentType, Cookie};
+use std::{fmt, io, str};
+use std::borrow::Cow;
+use super::writable::Writable;
 
 /// The default size, in bytes, of a chunk for streamed responses.
 pub const DEFAULT_CHUNK_SIZE: u64 = 4096;
@@ -59,13 +60,13 @@ impl<T> Body<T> {
     }
 }
 
-impl<T: io::Read> Body<T> {
+impl<W: Writable> Body<Writable> {
     /// Attempts to read `self` into a `Vec` and returns it. If reading fails,
     /// returns `None`.
     pub fn into_bytes(self) -> Option<Vec<u8>> {
         let mut vec = Vec::new();
         let mut body = self.into_inner();
-        if let Err(e) = body.read_to_end(&mut vec) {
+        if let Err(e) = body.write(Box::new(&mut vec)) {
             error_!("Error reading body: {:?}", e);
             return None;
         }
@@ -350,7 +351,7 @@ impl<'r> ResponseBuilder<'r> {
     /// ```
     #[inline(always)]
     pub fn sized_body<B>(&mut self, body: B) -> &mut ResponseBuilder<'r>
-        where B: io::Read + io::Seek + 'r
+        where B: Writable + io::Seek + 'r
     {
         self.response.set_sized_body(body);
         self
@@ -376,7 +377,7 @@ impl<'r> ResponseBuilder<'r> {
     /// ```
     #[inline(always)]
     pub fn streamed_body<B>(&mut self, body: B) -> &mut ResponseBuilder<'r>
-        where B: io::Read + 'r
+        where B: Writable + 'r
     {
         self.response.set_streamed_body(body);
         self
@@ -402,8 +403,8 @@ impl<'r> ResponseBuilder<'r> {
     /// # }
     /// ```
     #[inline(always)]
-    pub fn chunked_body<B: io::Read + 'r>(&mut self, body: B, chunk_size: u64)
-            -> &mut ResponseBuilder<'r>
+    pub fn chunked_body<B: Writable + 'r>(&mut self, body: B, chunk_size: u64)
+                                          -> &mut ResponseBuilder<'r>
     {
         self.response.set_chunked_body(body, chunk_size);
         self
@@ -425,8 +426,8 @@ impl<'r> ResponseBuilder<'r> {
     ///     .finalize();
     /// ```
     #[inline(always)]
-    pub fn raw_body<T: io::Read + 'r>(&mut self, body: Body<T>)
-            -> &mut ResponseBuilder<'r>
+    pub fn raw_body<T: Writable + 'r>(&mut self, body: Body<T>)
+                                      -> &mut ResponseBuilder<'r>
     {
         self.response.set_raw_body(body);
         self
@@ -560,7 +561,7 @@ impl<'r> ResponseBuilder<'r> {
 pub struct Response<'r> {
     status: Option<Status>,
     headers: HeaderMap<'r>,
-    body: Option<Body<Box<io::Read + 'r>>>,
+    body: Option<Body<Box<Writable + 'r>>>,
 }
 
 impl<'r> Response<'r> {
@@ -889,7 +890,7 @@ impl<'r> Response<'r> {
     /// assert_eq!(response.body_string(), Some("Hello, world!".to_string()));
     /// ```
     #[inline(always)]
-    pub fn body(&mut self) -> Option<Body<&mut io::Read>> {
+    pub fn body(&mut self) -> Option<Body<&mut Writable>> {
         // Looks crazy, right? Needed so Rust infers lifetime correctly. Weird.
         match self.body.as_mut() {
             Some(body) => Some(match body.as_mut() {
@@ -966,7 +967,7 @@ impl<'r> Response<'r> {
     /// assert!(response.body().is_none());
     /// ```
     #[inline(always)]
-    pub fn take_body(&mut self) -> Option<Body<Box<io::Read + 'r>>> {
+    pub fn take_body(&mut self) -> Option<Body<Box<Writable + 'r>>> {
         self.body.take()
     }
 
@@ -1004,7 +1005,7 @@ impl<'r> Response<'r> {
     /// ```
     #[inline]
     pub fn set_sized_body<B>(&mut self, mut body: B)
-        where B: io::Read + io::Seek + 'r
+        where B: Writable + io::Seek + 'r
     {
         let size = body.seek(io::SeekFrom::End(0))
             .expect("Attempted to retrieve size by seeking, but failed.");
@@ -1029,7 +1030,7 @@ impl<'r> Response<'r> {
     /// assert_eq!(response.body_string(), Some("aaaaa".to_string()));
     /// ```
     #[inline(always)]
-    pub fn set_streamed_body<B>(&mut self, body: B) where B: io::Read + 'r {
+    pub fn set_streamed_body<B>(&mut self, body: B) where B: Writable + 'r {
         self.set_chunked_body(body, DEFAULT_CHUNK_SIZE);
     }
 
@@ -1048,7 +1049,7 @@ impl<'r> Response<'r> {
     /// ```
     #[inline(always)]
     pub fn set_chunked_body<B>(&mut self, body: B, chunk_size: u64)
-            where B: io::Read + 'r {
+        where B: Writable + 'r {
         self.body = Some(Body::Chunked(Box::new(body), chunk_size));
     }
 
@@ -1070,7 +1071,7 @@ impl<'r> Response<'r> {
     /// assert_eq!(response.body_string(), Some("Hello!".to_string()));
     /// ```
     #[inline(always)]
-    pub fn set_raw_body<T: io::Read + 'r>(&mut self, body: Body<T>) {
+    pub fn set_raw_body<T: Writable + 'r>(&mut self, body: Body<T>) {
         self.body = Some(match body {
             Body::Sized(b, n) => Body::Sized(Box::new(b.take(n)), n),
             Body::Chunked(b, n) => Body::Chunked(Box::new(b), n),
@@ -1190,8 +1191,6 @@ impl<'r> fmt::Debug for Response<'r> {
         }
     }
 }
-
-use request::Request;
 
 impl<'r> Responder<'r> for Response<'r> {
     /// This is the identity implementation. It simply returns `Ok(self)`.
