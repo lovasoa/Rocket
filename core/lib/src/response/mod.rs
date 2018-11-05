@@ -30,7 +30,6 @@ crate mod flash;
 
 pub mod content;
 pub mod status;
-pub mod writable;
 
 pub use self::response::{Response, ResponseBuilder, Body, DEFAULT_CHUNK_SIZE};
 pub use self::responder::Responder;
@@ -38,8 +37,6 @@ pub use self::redirect::Redirect;
 pub use self::flash::Flash;
 pub use self::named_file::NamedFile;
 pub use self::stream::Stream;
-pub use self::writable::Writable;
-
 #[doc(inline)] pub use self::content::Content;
 
 /// Type alias for the `Result` of a `Responder::respond` call.

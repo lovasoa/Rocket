@@ -145,7 +145,7 @@ impl Rocket {
             Some(Body::Sized(body, size)) => {
                 hyp_res.headers_mut().set(header::ContentLength(size));
                 let mut stream = hyp_res.start()?;
-                body.write(Box::new(&mut stream))?;
+                io::copy(body, &mut stream)?;
                 stream.end()
             }
             Some(Body::Chunked(mut body, chunk_size)) => {
@@ -158,7 +158,13 @@ impl Rocket {
                 // The buffer stores the current chunk being written out.
                 let mut buffer = vec![0; chunk_size as usize];
                 let mut stream = hyp_res.start()?;
-                body.write_chunked(Box::new(&mut stream), chunk_size as usize);
+                loop {
+                    match body.read_max(&mut buffer)? {
+                        0 => break,
+                        n => stream.write_all(&buffer[..n])?,
+                    }
+                }
+
                 stream.end()
             }
         }
