@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io;
 
 use templates::{TemplateInfo, serde::Serialize};
 
@@ -9,7 +10,7 @@ crate trait Engine: Send + Sync + 'static {
     const EXT: &'static str;
 
     fn init(templates: &[(&str, &TemplateInfo)]) -> Option<Self> where Self: Sized;
-    fn render<C: Serialize>(&self, name: &str, context: C) -> Option<String>;
+    fn render<C: Serialize>(&self, name: &str, context: C) -> Option<Box<io::Read>>;
 }
 
 /// A structure exposing access to templating engines.
@@ -92,7 +93,7 @@ impl Engines {
         name: &str,
         info: &TemplateInfo,
         context: C
-    ) -> Option<String> {
+    ) -> Option<Box<io::Read>> {
         #[cfg(feature = "tera_templates")]
         {
             if info.extension == Tera::EXT {

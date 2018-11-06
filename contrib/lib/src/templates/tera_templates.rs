@@ -1,6 +1,6 @@
-use templates::serde::Serialize;
+use std::io;
 use templates::{Engine, TemplateInfo};
-
+use templates::serde::Serialize;
 pub use templates::tera::Tera;
 
 impl Engine for Tera {
@@ -30,14 +30,14 @@ impl Engine for Tera {
         }
     }
 
-    fn render<C: Serialize>(&self, name: &str, context: C) -> Option<String> {
+    fn render<C: Serialize>(&self, name: &str, context: C) -> Option<Box<io::Read>> {
         if self.get_template(name).is_err() {
             error_!("Tera template '{}' does not exist.", name);
             return None;
         };
 
         match Tera::render(self, name, &context) {
-            Ok(string) => Some(string),
+            Ok(string) => Some(Box::new(VecReader(string.as_bytes().to_vec()))),
             Err(e) => {
                 error_!("Error rendering Tera template '{}'.", name);
                 for error in e.iter() {
@@ -47,5 +47,15 @@ impl Engine for Tera {
                 None
             }
         }
+    }
+}
+
+struct VecReader(Vec<u8>);
+
+impl io::Read for VecReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let len = buf.len().min(self.0.len());
+        self.0.drain(..len).enumerate().for_each(|(i, n)| buf[i] = n);
+        Ok(len)
     }
 }

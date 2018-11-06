@@ -139,11 +139,12 @@ use self::glob::glob;
 
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::io;
 
 use rocket::{Rocket, State};
 use rocket::request::Request;
 use rocket::fairing::Fairing;
-use rocket::response::{self, Content, Responder};
+use rocket::response::{self, Content, Responder, Stream};
 use rocket::http::{ContentType, Status};
 
 const DEFAULT_TEMPLATE_DIR: &str = "templates";
@@ -351,14 +352,18 @@ impl Template {
             None
         })?;
 
-        Template::render(name, context).finalize(&ctxt).ok().map(|v| v.0)
+        Template::render(name, context).finalize(&ctxt).ok().and_then(|mut v| {
+            let mut string_buf= String::new();
+            v.0.read_to_string(&mut string_buf).ok()?;
+            Some(string_buf)
+        })
     }
 
     /// Actually render this template given a template context. This method is
     /// called by the `Template` `Responder` implementation as well as
     /// `Template::show()`.
     #[inline(always)]
-    fn finalize(self, ctxt: &Context) -> Result<(String, ContentType), Status> {
+    fn finalize(self, ctxt: &Context) -> Result<(Box<io::Read>, ContentType), Status> {
         let name = &*self.name;
         let info = ctxt.templates.get(name).ok_or_else(|| {
             let ts: Vec<_> = ctxt.templates.keys().map(|s| s.as_str()).collect();
@@ -373,12 +378,12 @@ impl Template {
             Status::InternalServerError
         })?;
 
-        let string = ctxt.engines.render(name, &info, value).ok_or_else(|| {
+        let rendered = ctxt.engines.render(name, &info, value).ok_or_else(|| {
             error_!("Template '{}' failed to render.", name);
             Status::InternalServerError
         })?;
 
-        Ok((string, info.data_type.clone()))
+        Ok((rendered, info.data_type.clone()))
     }
 }
 
@@ -394,7 +399,8 @@ impl Responder<'static> for Template {
             Status::InternalServerError
         })?.inner().context();
 
-        let (render, content_type) = self.finalize(&ctxt)?;
-        Content(content_type, render).respond_to(req)
+        let (rendered, content_type) = self.finalize(&ctxt)?;
+        let stream = Stream::chunked(rendered, 1452);
+        Content(content_type, stream).respond_to(req)
     }
 }
